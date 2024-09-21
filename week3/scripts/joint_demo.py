@@ -1,44 +1,60 @@
 #!/usr/bin/python3
-# license removed for brevity
 import rospy
-import math
-
 from sensor_msgs.msg import JointState
+import math
+import time
 
-def talker():
-    pub = rospy.Publisher('joint_states', JointState, queue_size=10)
-    rospy.init_node('talker', anonymous=True)
-    rate = rospy.Rate(1) # 10hz
+def initialize_joint_state():
+    js = JointState()
+    js.header.frame_id = "Torso"
+    js.name = [
+        "HeadYaw", "HeadPitch", "LHipYawPitch", "LHipRoll", "LHipPitch", 
+        "LKneePitch", "LAnklePitch", "LAnkleRoll", "LShoulderPitch", 
+        "LShoulderRoll", "LElbowYaw", "LElbowRoll", "LWristYaw", 
+        "LHand", "RHipYawPitch", "RHipRoll", "RHipPitch", "RKneePitch", 
+        "RAnklePitch", "RAnkleRoll", "RShoulderPitch", "RShoulderRoll", 
+        "RElbowYaw", "RElbowRoll", "RWristYaw", "RHand"
+    ]
+    js.position = [0.0] * len(js.name)
+    return js
 
-    # set initial angle
-    angle = 0
+def publish_joint_states(pub, js):
+    js.header.stamp = rospy.get_rostime()
+    pub.publish(js)
+    rospy.loginfo(js)
 
+def move_joint(js, joint_name, angle):
+    if joint_name in js.name:
+        js.position[js.name.index(joint_name)] = math.radians(angle)
 
-    while not rospy.is_shutdown():
-        #hello_str = "hello world %s" % rospy.get_time()
-        js = JointState()
-        
-        # header info
-        js.header.stamp = rospy.get_rostime()
-        js.header.frame_id="Torso"
-
-
-        # put in some joints that we'll edit
-        js.name.append("HeadYaw")
-        js.name.append("HeadPitch")
-
-        js.position.append(math.radians(angle))
-        js.position.append(0)
-
-        #comment this out once it gets noisy
-        rospy.loginfo(js)
-        
-        pub.publish(js)
-        angle = angle + 1
-        rate.sleep()
+def perform_action(pub, js, action):
+    for joint, angle in action.items():
+        move_joint(js, joint, angle)
+    publish_joint_states(pub, js)
+    time.sleep(0.5)
 
 if __name__ == '__main__':
+    rospy.init_node('robot_movement', anonymous=True)
+    pub = rospy.Publisher('joint_states', JointState, queue_size=10)
+    js = initialize_joint_state()
+
+    rospy.sleep(1)  # Allow time for publisher to set up
+
     try:
-        talker()
+        # Wave
+        perform_action(pub, js, {"LShoulderPitch": -45, "LShoulderRoll": 0, "LHand": 80})
+        perform_action(pub, js, {"LShoulderPitch": -45, "LShoulderRoll": 45, "LHand": 80})
+        perform_action(pub, js, {"LShoulderPitch": -45, "LShoulderRoll": 0, "LHand": 0})
+
+        # Head shake
+        perform_action(pub, js, {"HeadYaw": 45})
+        perform_action(pub, js, {"HeadYaw": -45})
+        perform_action(pub, js, {"HeadYaw": 0})
+
+        # Head nod
+        perform_action(pub, js, {"HeadPitch": 30})
+        perform_action(pub, js, {"HeadPitch": 0})
+
     except rospy.ROSInterruptException:
         pass
+
