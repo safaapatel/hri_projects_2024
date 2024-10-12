@@ -41,7 +41,8 @@ from std_msgs.msg import String
 from week0.msg import Person
 
 def callback(data):
-    rospy.loginfo(rospy.get_caller_id() + 'I heard %s', data.data)
+    rospy.loginfo(rospy.get_caller_id() + ' I heard x: %f, y: %f, z: %f', data.x, data.y, data.z)
+
 
 def listener():
 
@@ -59,3 +60,4 @@ def listener():
 
 if __name__ == '__main__':
     listener()
+
