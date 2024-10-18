@@ -12,13 +12,14 @@
     <!-- Launch robot state publisher -->
     <node pkg="robot_state_publisher" type="robot_state_publisher" name="robot_state_publisher" />
 
-    <!-- Launch our new NAO Head Tracker node -->
-    <node pkg="nao_head_tracker" type="nao_head_tracker.py" name="nao_head_tracker" output="screen">
+    
+    <node pkg="week4" type="tf_look_at_hand.py" name="look_at_hand" output="screen">
         <!-- Add any parameters here if needed -->
     </node>
 
     <!-- Launch joint state publisher GUI with remapped topic -->
     <node pkg="joint_state_publisher_gui" type="joint_state_publisher_gui" name="joint_commander">
-        <remap from="joint_states" to="joint_states_input"/>
+        <remap from="joint_states" to="joint_states_"/>
     </node>
 </launch>
+
