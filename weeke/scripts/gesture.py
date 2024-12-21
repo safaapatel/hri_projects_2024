@@ -1,106 +1,100 @@
 #!/usr/bin/python3
 import rospy
-from sensor_msgs.msg import JointState
-from std_msgs.msg import String
 import math
+from sensor_msgs.msg import JointState
+import subprocess
+from std_msgs.msg import String
+import re
 
-class NaoGestureController:
-    def __init__(self):
-        rospy.init_node('nao_gesture_controller', anonymous=True)
-        self.joint_pub = rospy.Publisher('/joint_states', JointState, queue_size=10)
-        rospy.Subscriber('/nao/gesture', String, self.gesture_callback)
-        self.joint_state = JointState()
-        self.joint_state.header.frame_id = "Torso"
-        self.joint_names = [
-            "HeadYaw", "HeadPitch", 
-            "RShoulderPitch", "RShoulderRoll", "RElbowYaw", "RElbowRoll",
-            "LShoulderPitch", "LShoulderRoll", "LElbowYaw", "LElbowRoll"
-        ]
-        self.joint_state.name = self.joint_names
-        self.joint_state.position = [0.0] * len(self.joint_names)
-        rospy.loginfo("Gesture Controller Node Initialized")
+received_command = ""
 
-    def set_joint_position(self, joint_name, angle_degrees):
-        if joint_name in self.joint_state.name:
-            index = self.joint_state.name.index(joint_name)
-            self.joint_state.position[index] = math.radians(angle_degrees)
+def initialize_joint_state():
+    js = JointState()
+    js.header.frame_id = "Torso"
+    js.name = [
+        "HeadYaw", "HeadPitch", "LHipYawPitch", "LHipRoll", "LHipPitch", 
+        "LKneePitch", "LAnklePitch", "LAnkleRoll", "LShoulderPitch", 
+        "LShoulderRoll", "LElbowYaw", "LElbowRoll", "LWristYaw", 
+        "LHand", "RHipYawPitch", "RHipRoll", "RHipPitch", "RKneePitch", 
+        "RAnklePitch", "RAnkleRoll", "RShoulderPitch", "RShoulderRoll", 
+        "RElbowYaw", "RElbowRoll", "RWristYaw", "RHand"
+    ]
+    js.position = [0.0] * len(js.name)
+    return js
 
-    def reset_joints(self):
-        for joint in self.joint_names:
-            self.set_joint_position(joint, 0)
-        self.publish_joints()
+def publish_joint_states(pub, js):
+    js.header.stamp = rospy.get_rostime()
+    pub.publish(js)
+    rospy.loginfo(js)
 
-    def publish_joints(self):
-        self.joint_state.header.stamp = rospy.get_rostime()
-        self.joint_pub.publish(self.joint_state)
+def move_to_position(pub, js, position):
+    for joint, angle in position.items():
+        if joint in js.name:
+            js.position[js.name.index(joint)] = math.radians(angle)
+    publish_joint_states(pub, js)
 
-    def wave_gesture(self):
-        wave_sequence = [
-            {"RShoulderPitch": -45, "RShoulderRoll": 0, "RElbowRoll": 30},
-            {"RShoulderRoll": 20, "RElbowRoll": 50},
-            {"RShoulderRoll": -20, "RElbowRoll": 50},
-            {"RShoulderRoll": 0, "RElbowRoll": 30}
-        ]
-        
-        for pose in wave_sequence:
-            for joint, angle in pose.items():
-                self.set_joint_position(joint, angle)
-            self.publish_joints()
-            rospy.sleep(0.5)
-        
-        self.reset_joints()
+def normal_wave(pub, js):
+    positions = [
+        {"LShoulderPitch": -45, "LShoulderRoll": 0, "LElbowRoll": 0, "LHand": 80},
+        {"LShoulderPitch": -45, "LShoulderRoll": 30, "LElbowRoll": -30, "LHand": 80},
+        {"LShoulderPitch": -45, "LShoulderRoll": -30, "LElbowRoll": -30, "LHand": 80},
+        {"LShoulderPitch": 0, "LShoulderRoll": 0, "LElbowRoll": 0, "LHand": 0}
+    ]
+    for position in positions:
+        move_to_position(pub, js, position)
+        rospy.sleep(1)
 
-    def nod_gesture(self):
-        nod_sequence = [
-            {"HeadPitch": 20},
-            {"HeadPitch": 0},
-            {"HeadPitch": 20},
-            {"HeadPitch": 0}
-        ]
-        
-        for pose in nod_sequence:
-            for joint, angle in pose.items():
-                self.set_joint_position(joint, angle)
-            self.publish_joints()
-            rospy.sleep(0.5)
-        
-        self.reset_joints()
+def normal_head_shake(pub, js):
+    positions = [
+        {"HeadYaw": 30},
+        {"HeadYaw": -30},
+        {"HeadYaw": 0}
+    ]
+    for position in positions:
+        move_to_position(pub, js, position)
+        rospy.sleep(0.5)
 
-    def shake_gesture(self):
-        shake_sequence = [
-            {"HeadYaw": 30},
-            {"HeadYaw": -30},
-            {"HeadYaw": 30},
-            {"HeadYaw": 0}
-        ]
-        
-        for pose in shake_sequence:
-            for joint, angle in pose.items():
-                self.set_joint_position(joint, angle)
-            self.publish_joints()
-            rospy.sleep(0.5)
-        
-        self.reset_joints()
+def normal_head_nod(pub, js):
+    positions = [
+        {"HeadPitch": 20},
+        {"HeadPitch": 0}
+    ]
+    for position in positions:
+        move_to_position(pub, js, position)
+        rospy.sleep(0.5)
 
-    def gesture_callback(self, msg):
-        gesture = msg.data.lower()
-        if gesture == 'wave':
-            self.wave_gesture()
-        elif gesture == 'nod':
-            self.nod_gesture()
-        elif gesture == 'shake':
-            self.shake_gesture()
-
-    def run(self):
-        rospy.spin()
-
-def main():
+def phrase_callback(data):
+    pub = rospy.Publisher('joint_states', JointState, queue_size=10)
+    rate = rospy.Rate(20)
+    global received_command
+    match_greeting = "hello"
+    match_salutation = "hi"
+    match_positive = "yes"
+    match_negative = "no"
+    
+    received_command = data.data
+    rospy.loginfo(f"Received Command: {received_command}")
+    subprocess.run(['espeak', received_command])
+    
     try:
-        gesture_controller = NaoGestureController()
-        gesture_controller.run()
+        if re.search(rf'\b{match_greeting}\b', received_command.lower()):
+            normal_wave(pub, js)
+        elif re.search(rf'\b{match_salutation}\b', received_command.lower()):
+            normal_wave(pub, js)
+        elif re.search(rf'\b{match_positive}\b', received_command.lower()):
+            normal_head_nod(pub, js)
+        elif re.search(rf'\b{match_negative}\b', received_command.lower()):
+            normal_head_shake(pub, js)
     except rospy.ROSInterruptException:
         pass
 
 if __name__ == '__main__':
-    main()
+    rospy.Subscriber('/tts_phrase', String, phrase_callback)
+    rospy.init_node('talker', anonymous=True)
+    js = initialize_joint_state()
+
+    try:
+        rospy.spin()
+    except rospy.ROSInterruptException:
+        pass
 

@@ -1,41 +1,70 @@
-#!/usr/bin/python3
+#!/usr/bin/env python
+
 import rospy
-from ros_vosk.msg import speech_recognition
-from std_msgs.msg import String
 import subprocess
+import pyaudio
+from std_msgs.msg import String
+from ros_vosk.msg import speech_recognition
+from vosk import Model, KaldiRecognizer
 
-class SpeechListener:
+
+class SpeechRecognitionNode:
     def __init__(self):
-        rospy.init_node('speech_listener', anonymous=True)
-        self.tts_pub = rospy.Publisher('/tts/phrase', String, queue_size=10)
-        self.gesture_pub = rospy.Publisher('/nao/gesture', String, queue_size=10)
-        rospy.Subscriber('/speech_recognition', speech_recognition, self.speech_callback)
-        rospy.loginfo("Speech Listener Node Initialized")
+        rospy.init_node('speech_recognition_node', anonymous=True)
+        self.pub = rospy.Publisher('/tts_phrase', String, queue_size=10)
+        self.model = self.load_vosk_model()
+        self.recognizer = KaldiRecognizer(self.model, 16000)
+        self.stream = self.setup_microphone_stream()
 
-    def speech_callback(self, msg):
-        if msg.type == 'final':
-            recognized_text = msg.text.strip()
-            if not recognized_text:
-                return
-            rospy.loginfo(f"Recognized Speech: {recognized_text}")
-            self.tts_pub.publish(recognized_text)
-            lowercase_text = recognized_text.lower()
-            if 'hello' in lowercase_text or 'hi' in lowercase_text:
-                self.gesture_pub.publish('wave')
-            elif 'yes' in lowercase_text:
-                self.gesture_pub.publish('nod')
-            elif 'no' in lowercase_text:
-                self.gesture_pub.publish('shake')
+    def load_vosk_model(self):
+        try:
+            return Model(model_name="vosk-model-small-en-us-0.15")
+        except Exception as e:
+            rospy.logerr(f"Error loading model: {e}")
+            raise
 
-    def run(self):
-        rospy.spin()
+    def setup_microphone_stream(self):
+        p = pyaudio.PyAudio()
+        try:
+            stream = p.open(format=pyaudio.paInt16, channels=1, rate=16000,
+                            input=True, frames_per_buffer=8000)
+            stream.start_stream()
+            rospy.loginfo("Microphone stream started. Listening...")
+            return stream
+        except IOError as e:
+            rospy.logerr(f"Error initializing microphone stream: {e}")
+            raise
+
+    def process_audio(self):
+        while not rospy.is_shutdown():
+            audio_data = self.stream.read(4000, exception_on_overflow=False)
+
+            if len(audio_data) == 0:
+                continue
+
+            if self.recognizer.AcceptWaveform(audio_data):
+                result = self.recognizer.Result()
+                recognized_text = result.split('"')[3]
+                rospy.loginfo(f"Recognized speech: {recognized_text}")
+                self.pub.publish(recognized_text)
+                self.speak_text(recognized_text)
+
+    def speak_text(self, text):
+        try:
+            subprocess.run(['espeak', text])
+        except Exception as e:
+            rospy.logerr(f"Error with TTS: {e}")
+
 
 def main():
     try:
-        listener = SpeechListener()
-        listener.run()
+        speech_recognition_node = SpeechRecognitionNode()
+        speech_recognition_node.process_audio()
     except rospy.ROSInterruptException:
-        pass
+        rospy.loginfo("ROS Interrupt Exception caught. Shutting down.")
+    except Exception as e:
+        rospy.logerr(f"An error occurred: {e}")
+
 
 if __name__ == '__main__':
     main()
